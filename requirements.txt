@@ -1,0 +1,12 @@
+pydantic>=2.5
+python-nmap>=0.7.1
+requests>=2.31
+cryptography>=42.0
+jinja2>=3.1
+plotly>=5.18
+
+# dev
+pytest>=7.4
+requests-mock>=1.11
+black>=24.1
+ruff>=0.2

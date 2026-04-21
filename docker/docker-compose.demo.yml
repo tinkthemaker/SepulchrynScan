@@ -1,0 +1,30 @@
+services:
+  juice-shop:
+    image: bkimminich/juice-shop
+    ports:
+      - "3000:3000"
+    networks:
+      - demo
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  scanner:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    volumes:
+      - ../data:/app/data
+      - ../reports:/app/reports
+    networks:
+      - demo
+    depends_on:
+      juice-shop:
+        condition: service_healthy
+    # Nmap requires elevated privileges for SYN scans and OS detection.
+    privileged: true
+
+networks:
+  demo:

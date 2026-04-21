@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SepulchrynScan — Executive Report | {{ scan.id }}</title>
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --text: #212529;
+      --muted: #6c757d;
+      --border: #dee2e6;
+      --crit: #dc3545;
+      --high: #fd7e14;
+      --med: #ffc107;
+      --low: #17a2b8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f8f9fa;
+      color: var(--text);
+      line-height: 1.5;
+    }
+    header {
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      padding: 2rem;
+      text-align: center;
+    }
+    header h1 { margin: 0 0 0.5rem; font-size: 1.75rem; }
+    header p { margin: 0; color: var(--muted); }
+    .container { max-width: 1100px; margin: 0 auto; padding: 1.5rem 2rem; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .stat-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      padding: 1.25rem;
+      text-align: center;
+    }
+    .stat-value {
+      font-size: 2rem;
+      font-weight: 700;
+      margin: 0.25rem 0;
+    }
+    .stat-label {
+      font-size: 0.85rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .chart-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      padding: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .severity-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+    .severity-cell {
+      text-align: center;
+      padding: 0.75rem;
+      border-radius: 0.25rem;
+      font-weight: 600;
+    }
+    .severity-critical { background: #f8d7da; color: #721c24; }
+    .severity-high { background: #ffe8d6; color: #7f2e00; }
+    .severity-medium { background: #fff3cd; color: #856404; }
+    .severity-low { background: #d1ecf1; color: #0c5460; }
+    .severity-none { background: #e2e3e5; color: #383d41; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.6rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+    th { background: #f1f3f5; }
+    @media print {
+      body { background: #fff; }
+      .no-print { display: none; }
+      .chart-card { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Executive Summary</h1>
+    <p>
+      Scan <code>{{ scan.id }}</code> &middot; {{ scan.target }}
+      &middot; {{ scan.started_at.strftime("%Y-%m-%d %H:%M UTC") }}
+    </p>
+  </header>
+
+  <div class="container">
+    <!-- Key Stats -->
+    <div class="grid">
+      <div class="stat-card">
+        <div class="stat-label">Risk Score</div>
+        <div class="stat-value" style="color:{% if risk_score >= 75 %}var(--crit){% elif risk_score >= 50 %}var(--high){% elif risk_score >= 25 %}var(--med){% else %}var(--low){% endif %}">{{ risk_score }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Total Findings</div>
+        <div class="stat-value">{{ scan.findings|length }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Hosts Scanned</div>
+        <div class="stat-value">{{ scan.hosts|length }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Status</div>
+        <div class="stat-value" style="font-size:1.2rem;text-transform:capitalize;">{{ scan.status.value }}</div>
+      </div>
+    </div>
+
+    <!-- Risk Gauge -->
+    <div class="chart-card">
+      <div id="risk-gauge"></div>
+    </div>
+
+    <!-- Severity Breakdown -->
+    <div class="chart-card">
+      <div id="severity-bar"></div>
+      <div class="severity-grid">
+        {% for sev, count in severity_breakdown.items() %}
+        <div class="severity-cell severity-{{ sev.lower() }}">
+          <div style="font-size:1.25rem">{{ count }}</div>
+          <div style="font-size:0.75rem">{{ sev }}</div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Top Risk Hosts -->
+    <div class="chart-card">
+      <div id="top-hosts-bar"></div>
+      {% if top_hosts %}
+      <table>
+        <thead><tr><th>Host</th><th>Risk Contribution</th></tr></thead>
+        <tbody>
+          {% for ip, score in top_hosts %}
+          <tr><td>{{ ip }}</td><td>{{ score }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p style="color:var(--muted);text-align:center;">No host-level risk data available.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      var figures = {
+        'risk-gauge': {{ plotly_figures.risk_gauge | safe }},
+        'severity-bar': {{ plotly_figures.severity_bar | safe }},
+        'top-hosts-bar': {{ plotly_figures.top_hosts_bar | safe }},
+      };
+      Object.keys(figures).forEach(function(id) {
+        Plotly.newPlot(id, figures[id].data, figures[id].layout, {responsive: true});
+      });
+    })();
+  </script>
+</body>
+</html>

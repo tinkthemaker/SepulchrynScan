@@ -1,0 +1,14 @@
+# SepulchrynScan authorization gate
+#
+# One target per line. Lines starting with # are comments.
+# Accepted forms: IPv4, IPv4 CIDR, hostname, URL.
+# The scanner refuses any target not matched by an entry here.
+#
+# You are responsible for ensuring you have authorization to scan
+# every target listed in this file. See README.md.
+
+127.0.0.1
+localhost
+
+# Bundled Juice Shop demo target (see `sepulchryn demo`)
+juice-shop

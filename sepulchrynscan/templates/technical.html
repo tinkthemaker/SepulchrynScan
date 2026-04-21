@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SepulchrynScan — Technical Report | {{ scan.id }}</title>
+  <style>
+    :root {
+      --bg: #f8f9fa;
+      --card: #ffffff;
+      --text: #212529;
+      --muted: #6c757d;
+      --border: #dee2e6;
+      --crit: #dc3545;
+      --high: #fd7e14;
+      --med: #ffc107;
+      --low: #17a2b8;
+      --none: #adb5bd;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    header {
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      padding: 1.5rem 2rem;
+    }
+    header h1 { margin: 0 0 0.25rem; font-size: 1.5rem; }
+    header p { margin: 0; color: var(--muted); font-size: 0.9rem; }
+    .container { max-width: 1400px; margin: 0 auto; padding: 1.5rem 2rem; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      padding: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .card h2 { margin-top: 0; font-size: 1.15rem; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.6rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+    th {
+      background: #f1f3f5;
+      cursor: pointer;
+      user-select: none;
+      position: sticky;
+      top: 0;
+    }
+    th:hover { background: #e9ecef; }
+    .filter-row input {
+      width: 100%;
+      padding: 0.3rem 0.4rem;
+      border: 1px solid var(--border);
+      border-radius: 0.25rem;
+      font-size: 0.85rem;
+    }
+    .severity-critical { color: var(--crit); font-weight: 700; }
+    .severity-high { color: var(--high); font-weight: 700; }
+    .severity-medium { color: #856404; font-weight: 700; }
+    .severity-low { color: var(--low); font-weight: 700; }
+    .severity-none { color: var(--none); }
+    .refs { font-size: 0.8rem; word-break: break-all; }
+    .refs a { color: #0d6efd; }
+    .host-block { margin-bottom: 1rem; }
+    .host-header {
+      background: #e9ecef;
+      padding: 0.5rem 0.75rem;
+      border-radius: 0.25rem;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .host-header:hover { background: #dee2e6; }
+    .host-body {
+      display: none;
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-top: none;
+      border-radius: 0 0 0.25rem 0.25rem;
+    }
+    .host-body.open { display: block; }
+    .service-tag {
+      display: inline-block;
+      background: #e9ecef;
+      padding: 0.2rem 0.5rem;
+      border-radius: 0.25rem;
+      margin: 0.15rem;
+      font-size: 0.8rem;
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.4rem;
+      border-radius: 0.25rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      background: var(--border);
+    }
+    pre {
+      background: #f8f9fa;
+      border: 1px solid var(--border);
+      border-radius: 0.25rem;
+      padding: 0.75rem;
+      overflow-x: auto;
+      font-size: 0.8rem;
+    }
+    @media print {
+      .no-print { display: none; }
+      .host-body { display: block !important; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Technical Report</h1>
+    <p>
+      Scan <code>{{ scan.id }}</code> &middot; Target <strong>{{ scan.target }}</strong>
+      &middot; {{ scan.started_at.strftime("%Y-%m-%d %H:%M UTC") }}
+      &middot; Status <span class="badge">{{ scan.status.value }}</span>
+      &middot; {{ scan.findings|length }} findings &middot; {{ scan.hosts|length }} hosts
+    </p>
+  </header>
+
+  <div class="container">
+    <!-- Findings Table -->
+    <div class="card">
+      <h2>Findings</h2>
+      <table id="findings-table">
+        <thead>
+          <tr class="filter-row">
+            <th><input data-col="0" placeholder="Filter severity..."></th>
+            <th><input data-col="1" placeholder="Filter CVE..."></th>
+            <th><input data-col="2" placeholder="Filter host..."></th>
+            <th><input data-col="3" placeholder="Filter port..."></th>
+            <th><input data-col="4" placeholder="Filter title..."></th>
+            <th><input data-col="5" placeholder="Filter source..."></th>
+          </tr>
+          <tr>
+            <th onclick="sortTable(0)">Severity &#8693;</th>
+            <th onclick="sortTable(1)">CVE &#8693;</th>
+            <th onclick="sortTable(2)">Host &#8693;</th>
+            <th onclick="sortTable(3)">Port &#8693;</th>
+            <th onclick="sortTable(4)">Title &#8693;</th>
+            <th onclick="sortTable(5)">Source &#8693;</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for f in findings %}
+          <tr>
+            <td class="severity-{{ f.severity.value.lower() }}">{{ f.severity.value }}</td>
+            <td>{{ f.cve_id or "—" }}</td>
+            <td>{{ f.host_ip }}</td>
+            <td>{{ f.port or "—" }}</td>
+            <td>{{ f.title }}</td>
+            <td>{{ f.source.value }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" style="text-align:center;color:var(--muted)">No findings</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Host Details -->
+    <div class="card">
+      <h2>Discovered Hosts</h2>
+      {% for h in hosts %}
+      <div class="host-block">
+        <div class="host-header" onclick="toggleHost(this)">
+          <span><strong>{{ h.ip }}</strong> {% if h.hostname %}({{ h.hostname }}){% endif %}</span>
+          <span class="badge">{{ h.services|length }} services</span>
+        </div>
+        <div class="host-body">
+          {% if h.services %}
+            <p><strong>Services:</strong></p>
+            {% for s in h.services %}
+            <div style="margin-bottom:0.5rem;">
+              <span class="service-tag">{{ s.protocol|upper }} {{ s.port }}</span>
+              <span class="service-tag">{{ s.name or "unknown" }}</span>
+              {% if s.product %}<span class="service-tag">{{ s.product }} {{ s.version }}</span>{% endif %}
+              {% if s.cve_ids %}
+                {% for cve in s.cve_ids %}
+                <span class="service-tag" style="background:#f8d7da;">{{ cve }}</span>
+                {% endfor %}
+              {% endif %}
+              {% if s.banner %}<pre>{{ s.banner }}</pre>{% endif %}
+            </div>
+            {% endfor %}
+          {% else %}
+            <p style="color:var(--muted)">No services discovered.</p>
+          {% endif %}
+        </div>
+      </div>
+      {% else %}
+      <p style="color:var(--muted)">No hosts discovered.</p>
+      {% endfor %}
+    </div>
+
+    <!-- Raw JSON Export -->
+    <div class="card no-print">
+      <h2>Raw Data Export</h2>
+      <p>Paste the JSON below into another tool or diff it against subsequent scans.</p>
+      <pre id="scan-json-display"></pre>
+    </div>
+  </div>
+
+  <script type="application/json" id="scan-json">{{ scan_json }}</script>
+  <script>
+    (function() {
+      // Pretty-print the embedded JSON
+      const raw = document.getElementById('scan-json').textContent;
+      try {
+        document.getElementById('scan-json-display').textContent = JSON.stringify(JSON.parse(raw), null, 2);
+      } catch(e) { /* ignore */ }
+
+      // Table sorting
+      let sortDir = {};
+      window.sortTable = function(n) {
+        const table = document.getElementById('findings-table');
+        const rows = Array.from(table.querySelectorAll('tbody tr'));
+        const dir = sortDir[n] = !sortDir[n] ? 1 : -sortDir[n];
+        rows.sort(function(a, b) {
+          const x = a.cells[n].textContent.trim();
+          const y = b.cells[n].textContent.trim();
+          return x.localeCompare(y) * dir;
+        });
+        rows.forEach(function(r) { table.querySelector('tbody').appendChild(r); });
+      };
+
+      // Column filtering
+      document.querySelectorAll('.filter-row input').forEach(function(inp) {
+        inp.addEventListener('input', function() {
+          const col = parseInt(inp.dataset.col);
+          const term = inp.value.toLowerCase();
+          const rows = document.querySelectorAll('#findings-table tbody tr');
+          rows.forEach(function(row) {
+            const cell = row.cells[col];
+            if (!cell) return;
+            const match = cell.textContent.toLowerCase().indexOf(term) > -1;
+            row.style.display = match ? '' : 'none';
+            // Store visibility state per row for multi-column filters
+            row.dataset['visible' + col] = match ? '1' : '0';
+            // Check all filter columns
+            let visible = true;
+            for (let c = 0; c < 6; c++) {
+              if (row.dataset['visible' + c] === '0') { visible = false; break; }
+            }
+            row.style.display = visible ? '' : 'none';
+          });
+        });
+      });
+
+      // Host toggles
+      window.toggleHost = function(header) {
+        const body = header.nextElementSibling;
+        body.classList.toggle('open');
+      };
+    })();
+  </script>
+</body>
+</html>

@@ -87,8 +87,11 @@ def http_headers(host: Host) -> list[Finding]:
 _TLS_NAME_RE = re.compile(r"https|ssl|tls", re.IGNORECASE)
 
 
+_WEAK_CIPHER_PATTERNS = ("RC4", "DES", "NULL", "EXPORT", "MD5")
+
+
 def _check_tls(host_ip: str, port: int) -> list[Finding]:
-    """Inspect TLS version and certificate expiry."""
+    """Inspect TLS version, certificate expiry, and negotiated cipher."""
     findings: list[Finding] = []
     try:
         context = ssl.create_default_context()
@@ -107,6 +110,24 @@ def _check_tls(host_ip: str, port: int) -> list[Finding]:
                             description=(
                                 f"Server at {host_ip}:{port} negotiates {version}, "
                                 f"which is below TLS 1.2."
+                            ),
+                            host_ip=host_ip,
+                            port=port,
+                        )
+                    )
+
+                cipher = ssock.cipher()
+                if cipher and any(
+                    p in cipher[0].upper() for p in _WEAK_CIPHER_PATTERNS
+                ):
+                    findings.append(
+                        Finding(
+                            source=FindingSource.TLS,
+                            severity=Severity.HIGH,
+                            title="Weak TLS cipher negotiated",
+                            description=(
+                                f"Server at {host_ip}:{port} negotiated "
+                                f"{cipher[0]}, which is considered weak."
                             ),
                             host_ip=host_ip,
                             port=port,
@@ -224,10 +245,66 @@ def exposed_services(host: Host) -> list[Finding]:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Admin panels on non-standard ports
+# ---------------------------------------------------------------------------
+
+_ADMIN_PATHS = ["/admin", "/login", "/wp-admin", "/phpmyadmin", "/dashboard", "/manage"]
+_ADMIN_MARKERS = ["login", "password", "username", "admin", "dashboard", "sign in"]
+_STANDARD_WEB_PORTS = {80, 443, 8080, 8443}
+
+
+def admin_panels(host: Host) -> list[Finding]:
+    """Flag likely admin panels listening on non-standard ports."""
+    findings: list[Finding] = []
+    for svc in host.services:
+        if svc.port in _STANDARD_WEB_PORTS:
+            continue
+        for scheme in ("https", "http"):
+            found = False
+            for path in _ADMIN_PATHS:
+                try:
+                    url = f"{scheme}://{host.ip}:{svc.port}{path}"
+                    resp = requests.get(
+                        url, timeout=5, verify=False, allow_redirects=True
+                    )
+                    if resp.status_code == 200:
+                        text = resp.text.lower()
+                        hits = sum(1 for m in _ADMIN_MARKERS if m in text)
+                        if hits >= 2:
+                            findings.append(
+                                Finding(
+                                    source=FindingSource.ADMIN_PANEL,
+                                    severity=Severity.MEDIUM,
+                                    title="Potential admin panel on non-standard port",
+                                    description=(
+                                        f"{url} responded with HTTP 200 and contains "
+                                        f"administration-related content markers."
+                                    ),
+                                    host_ip=host.ip,
+                                    port=svc.port,
+                                    protocol=svc.protocol,
+                                )
+                            )
+                            found = True
+                            break
+                except Exception:
+                    continue
+            if found:
+                break
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator
+# ---------------------------------------------------------------------------
+
+
 def run_all(hosts: list[Host]) -> list[Finding]:
     findings: list[Finding] = []
     for host in hosts:
         findings.extend(http_headers(host))
         findings.extend(tls_config(host))
         findings.extend(exposed_services(host))
+        findings.extend(admin_panels(host))
     return findings

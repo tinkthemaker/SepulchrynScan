@@ -16,11 +16,12 @@ from __future__ import annotations
 import os
 import sqlite3
 import time
+import warnings
 from datetime import datetime
 
 import requests
 
-from . import config, db
+from . import config, db, exploit, kev
 from .models import CVE, Finding, FindingSource, Host, Severity
 
 
@@ -107,8 +108,15 @@ def fetch_cve_from_nvd(cve_id: str) -> CVE:
     )
 
 
-def enrich(conn: sqlite3.Connection, hosts: list[Host]) -> list[Finding]:
-    """Turn vulners CVE IDs on each service into scored Findings."""
+def enrich(
+    conn: sqlite3.Connection, hosts: list[Host], offline: bool = False
+) -> list[Finding]:
+    """Turn vulners CVE IDs on each service into scored Findings.
+
+    Args:
+        offline: If True, skip NVD API calls for uncached CVEs and emit a
+                 warning instead of a Finding.
+    """
     # 1. Collect unique CVE IDs
     cve_ids: set[str] = set()
     for host in hosts:
@@ -121,17 +129,26 @@ def enrich(conn: sqlite3.Connection, hosts: list[Host]) -> list[Finding]:
         cached = db.get_cached_cve(conn, cve_id)
         if cached is not None:
             cve_map[cve_id] = cached
+        elif offline:
+            warnings.warn(f"Offline mode: CVE {cve_id} not in cache; skipping.")
         else:
             fetched = fetch_cve_from_nvd(cve_id)
             db.put_cve(conn, fetched)
             cve_map[cve_id] = fetched
 
-    # 3. Emit one Finding per (service, CVE)
+    # 3. Enrich with KEV + EPSS
+    if cve_map:
+        kev.enrich_cves(list(cve_map.values()))
+        exploit.enrich_cves(list(cve_map.values()))
+
+    # 4. Emit one Finding per (service, CVE)
     findings: list[Finding] = []
     for host in hosts:
         for svc in host.services:
             for cve_id in svc.cve_ids:
-                cve = cve_map[cve_id]
+                cve = cve_map.get(cve_id)
+                if cve is None:
+                    continue
                 findings.append(
                     Finding(
                         source=FindingSource.CVE,
@@ -144,6 +161,9 @@ def enrich(conn: sqlite3.Connection, hosts: list[Host]) -> list[Finding]:
                         cve_id=cve_id,
                         cvss_v3_score=cve.cvss_v3_score,
                         references=cve.references,
+                        in_kev=cve.in_kev,
+                        epss_score=cve.epss_score,
+                        exploit_refs=cve.exploit_refs,
                     )
                 )
     return findings

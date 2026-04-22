@@ -10,7 +10,10 @@
 
 - **Automated Discovery** — Nmap-based port and service detection with the `vulners` NSE script.
 - **CVE Enrichment** — Two-stage pipeline: vulners finds CVE IDs, then the NVD API 2.0 supplies authoritative CVSS v3.1 scores. Results are cached in SQLite with TTL.
-- **Custom Checks** — HTTP security headers, TLS version & certificate expiry, and exposed-service flagging.
+- **Custom Checks** — HTTP security headers, TLS version / certificate expiry / weak ciphers, exposed-service flagging, and admin-panel detection on non-standard ports.
+- **Threat-Informed Prioritization** — Overlays CISA's Known Exploited Vulnerabilities (KEV) catalog, FIRST.org EPSS exploit-probability scores, and Exploit-DB public-exploit availability onto every CVE finding.
+- **Offline Mode** — Scan with cached CVE data only; skip live NVD API calls.
+- **Scan Diff** — Compare two scans to see new, resolved, and persistent findings.
 - **Risk Scoring** — Weighted formula (Critical=4×, High=2×, Medium=1×, Low=0.5×) capped at 100.
 - **Dual Reports** —
   - **Technical**: sortable/filterable findings table, per-host service details, raw JSON export.
@@ -53,6 +56,14 @@ Then scan:
 python -m sepulchrynscan.cli scan 127.0.0.1
 ```
 
+Scan in offline mode (uses cached CVE data only):
+
+```bash
+python -m sepulchrynscan.cli scan --offline 127.0.0.1
+# or set the env var
+SEPULCHRYN_OFFLINE=1 python -m sepulchrynscan.cli scan 127.0.0.1
+```
+
 ### Generate Reports
 
 ```bash
@@ -60,8 +71,17 @@ python -m sepulchrynscan.cli report <scan_id>
 ```
 
 Outputs two files:
-- `reports/<scan_id>/technical.html`
-- `reports/<scan_id>/executive.html`
+- `reports/<scan_id>/technical.html` — sortable/filterable table with KEV, EPSS, and Exploit-DB columns
+- `reports/<scan_id>/executive.html` — risk gauge, severity breakdown, top-risk hosts, plus actively-exploited count, public-exploit count, and average EPSS
+
+### Compare Two Scans (Diff / Delta)
+
+```bash
+python -m sepulchrynscan.cli diff <scan_id_a> <scan_id_b>
+```
+
+Outputs:
+- `reports/diff-<scan_id_a>-<scan_id_b>/diff.html` — new, resolved, and persistent findings
 
 ### List Scans
 
@@ -98,13 +118,17 @@ sepulchrynscan/
 ├── cli.py         # argparse entrypoint + allowlist enforcement
 ├── discovery.py   # Nmap -sV + vulners → Host / Service models
 ├── cve.py         # NVD API 2.0 lookup + SQLite cache
-├── checks.py      # HTTP headers, TLS config, exposed services
+├── kev.py         # CISA KEV catalog + EPSS scoring
+├── exploit.py     # Exploit-DB CSV lookup + CVE enrichment
+├── checks.py      # HTTP headers, TLS config, weak ciphers, exposed services, admin panels
 ├── risk.py        # Pure risk-score functions
-├── report.py      # Jinja2 + Plotly → dual HTML reports
+├── diff.py        # Scan comparison / delta logic
+├── report.py      # Jinja2 + Plotly → dual HTML reports + diff report
 ├── db.py          # Raw SQLite (no ORM), schema + CRUD + cache
 └── templates/
     ├── technical.html
-    └── executive.html
+    ├── executive.html
+    └── diff.html
 ```
 
 Design principles (from the project spec):
@@ -121,7 +145,7 @@ Design principles (from the project spec):
 pytest -v
 ```
 
-**74 tests** covering risk formulas, CVE cache behavior, NVD API fallback, discovery parsing, allowlist enforcement, report generation, and SQLite round-trips.
+**101 tests** covering risk formulas, CVE cache behavior, NVD API fallback, discovery parsing, allowlist enforcement, offline mode, weak-cipher detection, admin-panel heuristic, KEV/EPSS/Exploit-DB enrichment, scan diffing, report generation, and SQLite round-trips.
 
 ```bash
 black .
@@ -140,7 +164,6 @@ ruff check --fix .
 
 - REST API + Web UI (v1.1)
 - Scheduled / recurring scans (v1.1)
-- Delta reporting (v1.1)
 - Compliance control mapping (v1.2)
 - Report branding / custom templates (v1.2)
 

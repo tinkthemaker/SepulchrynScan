@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 import requests_mock
 
-from sepulchrynscan import config, db
+from sepulchrynscan import config, db, exploit, kev
 from sepulchrynscan.cve import enrich, fetch_cve_from_nvd
 from sepulchrynscan.models import CVE, FindingSource, Host, Service, Severity
 
@@ -154,7 +154,9 @@ class TestEnrich:
             ip="127.0.0.1",
             services=[Service(port=8080, cve_ids=["CVE-2021-44228"])],
         )
-        findings = enrich(conn, [host])
+        with patch.object(kev, "enrich_cves"):
+            with patch.object(exploit, "enrich_cves"):
+                findings = enrich(conn, [host])
 
         assert len(requests_mock.request_history) == 0
         assert len(findings) == 1
@@ -182,7 +184,9 @@ class TestEnrich:
             ],
         )
         with patch("sepulchrynscan.cve.time.sleep"):
-            findings = enrich(conn, [host])
+            with patch.object(kev, "enrich_cves"):
+                with patch.object(exploit, "enrich_cves"):
+                    findings = enrich(conn, [host])
 
         assert len(requests_mock.request_history) == 1
         assert len(findings) == 1
@@ -216,9 +220,48 @@ class TestEnrich:
             ),
         ]
         with patch("sepulchrynscan.cve.time.sleep"):
-            findings = enrich(conn, hosts)
+            with patch.object(kev, "enrich_cves"):
+                with patch.object(exploit, "enrich_cves"):
+                    findings = enrich(conn, hosts)
 
         # Only one NVD request despite three service occurrences
         assert len(requests_mock.request_history) == 1
         assert len(findings) == 3
         assert {f.host_ip for f in findings} == {"10.0.0.1", "10.0.0.2"}
+
+    def test_offline_mode_skips_uncached_cve(self, requests_mock: requests_mock.Mocker):
+        conn = _make_conn()
+        host = Host(
+            ip="192.168.1.1",
+            services=[Service(port=80, cve_ids=["CVE-2021-44228"])],
+        )
+        with patch.object(kev, "enrich_cves"):
+            with patch.object(exploit, "enrich_cves"):
+                findings = enrich(conn, [host], offline=True)
+
+        # No NVD request in offline mode
+        assert len(requests_mock.request_history) == 0
+        # Finding is skipped because CVE is not in cache
+        assert len(findings) == 0
+
+    def test_exploit_enrich_hook_runs(self, requests_mock: requests_mock.Mocker):
+        conn = _make_conn()
+        cached = CVE(
+            id="CVE-2021-44228",
+            cvss_v3_score=9.8,
+            severity=Severity.CRITICAL,
+            description="Cached",
+            published_at=datetime(2021, 12, 10, tzinfo=timezone.utc),
+        )
+        db.put_cve(conn, cached)
+
+        host = Host(
+            ip="127.0.0.1",
+            services=[Service(port=8080, cve_ids=["CVE-2021-44228"])],
+        )
+        with patch.object(kev, "enrich_cves"):
+            with patch.object(exploit, "enrich_cves") as mock_exploit:
+                findings = enrich(conn, [host])
+
+        mock_exploit.assert_called_once()
+        assert len(findings) == 1

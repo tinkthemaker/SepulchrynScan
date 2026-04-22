@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import ipaddress
+import os
 import subprocess
 import sys
 import time
@@ -19,7 +20,7 @@ from pathlib import Path
 
 import requests
 
-from . import checks, config, cve, db, discovery, report
+from . import checks, config, cve, db, diff, discovery, report
 from .models import Scan, ScanStatus
 
 
@@ -73,6 +74,10 @@ def _cmd_scan(args: argparse.Namespace, nmap_override: str | None = None) -> int
         )
         return 2
 
+    offline = getattr(args, "offline", False) or bool(
+        os.environ.get(config.OFFLINE_ENV)
+    )
+
     config.ensure_dirs()
     scan = Scan(id=_uuid(), target=args.target, started_at=datetime.now(timezone.utc))
 
@@ -80,7 +85,7 @@ def _cmd_scan(args: argparse.Namespace, nmap_override: str | None = None) -> int
         db.insert_scan(conn, scan)
         hosts = discovery.run(args.target, arguments=nmap_override)
         db.insert_hosts(conn, scan.id, hosts)
-        cve_findings = cve.enrich(conn, hosts)
+        cve_findings = cve.enrich(conn, hosts, offline=offline)
         check_findings = checks.run_all(hosts)
         db.insert_findings(conn, scan.id, cve_findings + check_findings)
         db.update_scan_status(
@@ -176,6 +181,24 @@ def _cmd_list(_: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_diff(args: argparse.Namespace) -> int:
+    with db.connect() as conn:
+        scan_a = db.get_scan(conn, args.scan_id_a)
+        scan_b = db.get_scan(conn, args.scan_id_b)
+    if scan_a is None:
+        print(f"error: no scan with id {args.scan_id_a}", file=sys.stderr)
+        return 2
+    if scan_b is None:
+        print(f"error: no scan with id {args.scan_id_b}", file=sys.stderr)
+        return 2
+
+    result = diff.diff_scans(scan_a, scan_b)
+    out_dir = config.REPORTS_DIR / f"diff-{scan_a.id}-{scan_b.id}"
+    tech_path = report.render_diff(result, out_dir)
+    print(f"diff report  → {tech_path}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="sepulchryn")
     sub = p.add_subparsers(dest="command", required=True)
@@ -183,6 +206,11 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("scan", help="run a scan against a target")
     s.add_argument(
         "target", help="IP, CIDR, hostname, or URL (must be in targets.allowlist)"
+    )
+    s.add_argument(
+        "--offline",
+        action="store_true",
+        help="skip NVD API calls; use cached CVE data only",
     )
     s.set_defaults(func=_cmd_scan)
 
@@ -195,6 +223,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_parser = sub.add_parser("list", help="list recent scans")
     list_parser.set_defaults(func=_cmd_list)
+
+    diff_parser = sub.add_parser(
+        "diff", help="compare two scans and render a delta report"
+    )
+    diff_parser.add_argument("scan_id_a", help="baseline scan id")
+    diff_parser.add_argument("scan_id_b", help="comparison scan id")
+    diff_parser.set_defaults(func=_cmd_diff)
 
     return p
 

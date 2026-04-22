@@ -226,6 +226,28 @@ class TestFindings:
         assert cve_finding.cvss_v3_score == 10.0
         assert cve_finding.references == ["https://nvd.nist.gov/"]
 
+    def test_insert_findings_with_exploit_refs(self):
+        conn = _make_conn()
+        scan = _sample_scan("s5-exploit")
+        findings = [
+            Finding(
+                source=FindingSource.CVE,
+                severity=Severity.CRITICAL,
+                title="CVE-2021-44228",
+                host_ip="10.0.0.1",
+                cve_id="CVE-2021-44228",
+                exploit_refs=["EDB-50592", "EDB-50590"],
+            ),
+        ]
+        with db.transaction(conn):
+            db.insert_scan(conn, scan)
+            db.insert_findings(conn, "s5-exploit", findings)
+
+        fetched = db.get_scan(conn, "s5-exploit")
+        assert fetched is not None
+        assert len(fetched.findings) == 1
+        assert fetched.findings[0].exploit_refs == ["EDB-50592", "EDB-50590"]
+
     def test_findings_sorted_by_severity(self):
         conn = _make_conn()
         scan = _sample_scan("s6")
@@ -276,6 +298,24 @@ class TestCveCache:
         assert cached.severity == Severity.CRITICAL
         assert cached.description == "Log4j RCE"
         assert cached.references == ["https://nvd.nist.gov/"]
+        assert cached.exploit_refs == []
+
+    def test_put_and_get_with_exploit_refs(self):
+        conn = _make_conn()
+        cve = CVE(
+            id="CVE-2021-44228",
+            cvss_v3_score=9.8,
+            severity=Severity.CRITICAL,
+            description="Log4j RCE",
+            fetched_at=datetime.now(timezone.utc),
+            exploit_refs=["EDB-50592"],
+        )
+        with db.transaction(conn):
+            db.put_cve(conn, cve)
+
+        cached = db.get_cached_cve(conn, "CVE-2021-44228")
+        assert cached is not None
+        assert cached.exploit_refs == ["EDB-50592"]
 
     def test_missing_entry_returns_none(self):
         conn = _make_conn()

@@ -1,5 +1,6 @@
 """Tests for the risk score formula. Per PROJECT_SPEC.md §5.4 REQ-RPT-03,
 this function must be pure and unit-testable — that is what lives here."""
+
 from __future__ import annotations
 
 from sepulchrynscan.models import Finding, FindingSource, Severity
@@ -52,7 +53,11 @@ def test_finding_without_cvss_uses_notional_value():
 def test_severity_breakdown_returns_all_severities():
     findings = [_f(Severity.HIGH, 7.0), _f(Severity.HIGH, 8.0), _f(Severity.LOW, 2.0)]
     assert severity_breakdown(findings) == {
-        "Critical": 0, "High": 2, "Medium": 0, "Low": 1, "None": 0,
+        "Critical": 0,
+        "High": 2,
+        "Medium": 0,
+        "Low": 1,
+        "None": 0,
     }
 
 

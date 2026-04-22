@@ -126,6 +126,18 @@
         <div class="stat-label">Status</div>
         <div class="stat-value" style="font-size:1.2rem;text-transform:capitalize;">{{ scan.status.value }}</div>
       </div>
+      <div class="stat-card">
+        <div class="stat-label">Actively Exploited (KEV)</div>
+        <div class="stat-value" style="color:{% if kev_count > 0 %}var(--crit){% else %}var(--low){% endif %}">{{ kev_count }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Public Exploits Available</div>
+        <div class="stat-value" style="color:{% if exploit_count > 0 %}var(--crit){% else %}var(--low){% endif %}">{{ exploit_count }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Avg EPSS</div>
+        <div class="stat-value">{{ "%.1f"|format(avg_epss * 100) }}%</div>
+      </div>
     </div>
 
     <!-- Risk Gauge -->

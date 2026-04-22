@@ -99,6 +99,7 @@ Two-stage pipeline, explicit separation of concerns:
 | REQ-CVE-03 | Risk score is computed from **NVD-sourced** CVSS, not vulners' potentially stale data. | P0 |
 | REQ-CVE-04 | Support offline mode: use cached NVD data only; skip uncached CVEs with a warning. | P1 |
 | REQ-CVE-05 | NVD cache schema includes `fetched_at` timestamp; entries older than 30 days are refreshed opportunistically. | P1 |
+| REQ-CVE-06 | Enrich CVEs with Exploit-DB references via local CSV lookup. | P1 |
 
 ### 5.3 Custom Checks (REQ-CHK)
 
@@ -278,6 +279,9 @@ A single entrypoint means a single contract for AI to maintain. FastAPI and Web 
 ### 10.6 Dual-report philosophy retained
 The executive/technical split is the project's actual differentiator and stays P0. Cutting it would make this "just another scanner."
 
+### 10.7 Exploit-availability signal
+Exploit-DB CSV lookup adds a third enrichment pillar alongside KEV and EPSS. It answers "is there a public exploit?" without crossing the detect-only line. Metadata only; no active exploitation.
+
 ---
 
 ## 11. Risk & Constraints
@@ -294,13 +298,22 @@ The executive/technical split is the project's actual differentiator and stays P
 
 ## 12. Success Criteria
 
-- [ ] `sepulchryn demo` spins up Juice Shop, scans it, and writes two HTML reports in under 2 minutes.
-- [ ] Technical report contains NVD-authoritative CVSS scores and working reference links.
-- [ ] Executive report contains a risk-score gauge, severity breakdown chart, and a top-risk-hosts chart.
-- [ ] Scanner refuses a target not in `targets.allowlist`.
-- [ ] Rescanning the same target hits the CVE cache with >90% hit rate (observed in logs).
-- [ ] Docker demo (`docker-compose -f docker/docker-compose.demo.yml up`) succeeds on a clean machine.
-- [ ] `pytest` passes with coverage on `risk.py`, `cve.py`, `db.py`.
+- [x] `sepulchryn demo` spins up Juice Shop, scans it, and writes two HTML reports in under 2 minutes.
+- [x] Technical report contains NVD-authoritative CVSS scores and working reference links.
+- [x] Executive report contains a risk-score gauge, severity breakdown chart, and a top-risk-hosts chart.
+- [x] Scanner refuses a target not in `targets.allowlist`.
+- [x] Rescanning the same target hits the CVE cache with >90% hit rate (observed in logs).
+- [x] Docker demo (`docker-compose -f docker/docker-compose.demo.yml up`) succeeds on a clean machine.
+- [x] `pytest` passes with coverage on `risk.py`, `cve.py`, `db.py`.
+
+### Post-MVP Additions (Implemented)
+
+- [x] `--offline` flag skips NVD API calls; uses cache only (REQ-CVE-04).
+- [x] Weak cipher detection in TLS check (REQ-CHK-02).
+- [x] Admin-panel heuristic on non-standard ports (REQ-CHK-03).
+- [x] CISA KEV + EPSS enrichment on CVE findings.
+- [x] Exploit-DB enrichment on CVE findings.
+- [x] `sepulchryn diff` delta reporting between two scans.
 
 ---
 
@@ -309,7 +322,7 @@ The executive/technical split is the project's actual differentiator and stays P
 | Phase | Feature | Rationale for deferral |
 |-------|---------|------------------------|
 | **v1.1** | FastAPI REST layer over existing pipeline | Second interface, same pipeline |
-| **v1.1** | Delta scanning + trend visualization | Requires v1.0 scans to diff |
+| **v1.1** | ~~Delta scanning + trend visualization~~ | **Done in v1.0** — `sepulchryn diff` |
 | **v1.1** | Scheduled recurring scans | Wraps `sepulchryn scan` in `schedule` lib |
 | **v1.2** | Custom check plugin loader | Only worth it once a 4th check is actually needed |
 | **v1.2** | Web UI (FastAPI + HTMX or minimal React) | After REST layer exists |

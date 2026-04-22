@@ -7,6 +7,7 @@ with weights Critical=4, High=2, Medium=1, Low=0.5, None=0.
 CVSS is the authoritative score from NVD; for non-CVE findings where no
 CVSS is available, a notional value is assigned by severity.
 """
+
 from __future__ import annotations
 
 from collections import Counter
@@ -44,7 +45,9 @@ def severity_breakdown(findings: Iterable[Finding]) -> dict[str, int]:
     return {sev.value: counter.get(sev.value, 0) for sev in Severity}
 
 
-def top_risk_hosts(findings: Iterable[Finding], limit: int = 5) -> list[tuple[str, float]]:
+def top_risk_hosts(
+    findings: Iterable[Finding], limit: int = 5
+) -> list[tuple[str, float]]:
     """Return the highest-scoring hosts by summed weighted score."""
     per_host: dict[str, float] = {}
     for f in findings:

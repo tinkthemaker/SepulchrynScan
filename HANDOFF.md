@@ -1,171 +1,138 @@
 # SepulchrynScan — Handoff
 
 **For:** next agent/model picking up development
-**From:** initial scaffolding session (2026-04-21)
+**From:** feature completion session (2026-04-21)
 **Read first:** [PROJECT_SPEC.md](PROJECT_SPEC.md) — it is the single source of truth for architecture and scope.
 
 ---
 
 ## Goal
 
-Build **SepulchrynScan**, a vibe-coded (AI-generated) vulnerability scanner that produces dual-output reports: a technical HTML for practitioners and an executive HTML for leadership. Portfolio project for cybersecurity job demos. MVP scope is CLI-only; see `PROJECT_SPEC.md §13` for what is deferred.
+**SepulchrynScan** is a vibe-coded (AI-generated) vulnerability scanner that produces dual-output reports: a technical HTML for practitioners and an executive HTML for leadership. Portfolio project for cybersecurity job demos. MVP scope is CLI-only.
 
 Key guiding principle: **design decisions favor what AI can generate cleanly.** Flat package tree, Pydantic contracts as the spine, raw SQL, no plugin loaders, no native PDF deps. When in doubt, regenerate a whole file rather than patching.
 
 ---
 
-## Current Progress
+## Current State — MVP is Feature-Complete
 
-### Fully implemented
-- [sepulchrynscan/models.py](sepulchrynscan/models.py) — Pydantic v2 contracts: `Severity`, `FindingSource`, `ScanStatus`, `CVE`, `Service`, `Host`, `Finding`, `Scan`. `Severity.from_cvss()` is the canonical CVSS→bucket mapping.
-- [sepulchrynscan/db.py](sepulchrynscan/db.py) — sqlite3 (no ORM): schema, `connect`, `transaction`, scan CRUD, CVE cache with TTL.
-- [sepulchrynscan/risk.py](sepulchrynscan/risk.py) — `risk_score`, `severity_breakdown`, `top_risk_hosts`. Pure functions. Formula is locked in per spec §5.4 REQ-RPT-03.
-- [sepulchrynscan/config.py](sepulchrynscan/config.py) — paths, NVD constants, severity weights.
-- [sepulchrynscan/cli.py](sepulchrynscan/cli.py) — argparse with `scan`, `report`, `demo`, `list`. Allowlist gate (`target_allowed`) is enforced in `_cmd_scan`. `list` works end-to-end.
-- [tests/test_risk.py](tests/test_risk.py) — 8 tests covering the risk formula, severity breakdown, host ranking.
-- [targets.allowlist](targets.allowlist), [.gitignore](.gitignore), [requirements.txt](requirements.txt).
+All P0 requirements from `PROJECT_SPEC.md` are implemented. Post-MVP additions (KEV/EPSS, offline mode, diff, weak ciphers, admin panels) are also implemented and tested.
 
-### Stubbed (signatures + `TODO(vibe)` notes only)
-- [sepulchrynscan/discovery.py](sepulchrynscan/discovery.py) — `run(target) -> list[Host]`
-- [sepulchrynscan/cve.py](sepulchrynscan/cve.py) — `enrich(conn, hosts) -> list[Finding]`, `fetch_cve_from_nvd(cve_id)`
-- [sepulchrynscan/checks.py](sepulchrynscan/checks.py) — `http_headers`, `tls_config`, `exposed_services`, `run_all`
-- [sepulchrynscan/report.py](sepulchrynscan/report.py) — `render(scan, out_dir) -> (tech_path, exec_path)`
-- [sepulchrynscan/templates/technical.html](sepulchrynscan/templates/technical.html) and [executive.html](sepulchrynscan/templates/executive.html) — placeholder bodies with TODO blocks describing required context vars and output.
+### Implemented modules
 
-### Not yet written
-- `docker/Dockerfile` and `docker/docker-compose.demo.yml` (demo target: OWASP Juice Shop).
-- `README.md`.
-- Unit tests for `db.py`, `cve.py`, and allowlist enforcement.
-- Any scan has ever actually run — the pipeline is not yet wired.
+| File | Status | Notes |
+|------|--------|-------|
+| `models.py` | Done | Pydantic v2 contracts: `Severity`, `FindingSource`, `ScanStatus`, `CVE`, `Service`, `Host`, `Finding`, `Scan`. `Severity.from_cvss()` is canonical. |
+| `db.py` | Done | sqlite3 (no ORM): schema, `connect`, `transaction`, scan CRUD, CVE cache with TTL, lightweight `_migrate_schema()` for new columns. |
+| `risk.py` | Done | `risk_score`, `severity_breakdown`, `top_risk_hosts`. Pure functions. Formula locked per spec §5.4. |
+| `config.py` | Done | Paths, NVD constants, CISA/EPSS URLs, severity weights, offline env var. |
+| `cli.py` | Done | argparse: `scan`, `report`, `demo`, `list`, `diff`. `--offline` flag. Allowlist gate enforced. |
+| `discovery.py` | Done | `python-nmap` wrapper. `-sV --top-ports 1000 --script vulners`. Parses CVE IDs via regex. |
+| `cve.py` | Done | NVD API 2.0 lookup with 429 backoff, CVSS fallback chain (v3.1 → v3.0 → v2). `offline` param skips uncached CVEs. |
+| `kev.py` | Done | **New.** CISA KEV catalog fetch (24h cache) + FIRST.org EPSS batch API. Enriches CVEs in-place. |
+| `exploit.py` | Done | **New.** Exploit-DB CSV fetch (7-day cache) + CVE→EDB mapping. Enriches CVEs in-place. |
+| `checks.py` | Done | HTTP headers, TLS version/cert expiry/weak ciphers, exposed services, admin panels on non-standard ports. |
+| `diff.py` | Done | **New.** `diff_scans()` categorizes findings as new/resolved/persistent by composite key. |
+| `report.py` | Done | Jinja2 + Plotly → `technical.html` + `executive.html` + `diff.html`. |
+| `templates/` | Done | `technical.html`, `executive.html`, `diff.html`. |
+| `docker/` | Done | `Dockerfile` + `docker-compose.demo.yml` with Juice Shop. |
+
+### Test coverage
+
+**101 tests** across:
+- `test_risk.py` — risk formula, cap, severity breakdown, host ranking
+- `test_cve.py` — NVD fetch, cache hit/miss, 429 backoff, offline mode, exploit hook
+- `test_db.py` — schema, transactions, scan lifecycle, hosts/services, findings, CVE cache TTL, cascade delete, exploit_refs round-trip
+- `test_discovery.py` — service/CVE extraction, empty results, error handling
+- `test_checks.py` — HTTP headers, TLS (version, expiry, weak cipher), exposed services, admin panels
+- `test_cli_allowlist.py` — allowlist matching, CLI denial
+- `test_cli.py` — offline flag, diff command
+- `test_kev.py` — KEV fetch/cache, EPSS batch lookup, CVE enrichment
+- `test_exploit.py` — CSV parsing, enrichment, cache TTL, offline mode, graceful failure
+- `test_diff.py` — new/resolved/persistent detection
+- `test_report.py` — both report files render, Plotly charts present, empty scan OK, exploit column/stat
 
 ---
 
 ## What Worked
 
-Keep these decisions. They are load-bearing and were made deliberately.
+Keep these decisions. They are load-bearing.
 
-- **Pydantic v2 as the inter-module spine.** Every file's inputs and outputs are typed models. This is the primary defense against AI regeneration drift.
-- **Raw SQL in one file.** `db.py` is readable end-to-end. Do not introduce SQLAlchemy or another ORM — regeneration becomes fragile.
-- **Flat package layout.** ~10 files in `sepulchrynscan/`, each under ~250 lines. An agent can rewrite any single file in one turn without needing the whole project in context.
-- **HTML-first reporting with Plotly JSON embedded.** Zero native dependencies. Browser print-to-PDF if a PDF is wanted. **Do not** pull in WeasyPrint, ReportLab, or anything that requires GTK/Cairo/binary wheels.
-- **Two-stage CVE pipeline.** Vulners NSE finds CVE IDs in discovery (one subprocess call, no rate limits). NVD API 2.0 scores them (cached by ID, high hit rate). Risk score uses the NVD-sourced CVSS only — vulners' CVSS is ignored as potentially stale.
-- **Allowlist gate in `cli.py`.** Enforce via `target_allowed` before any network I/O. Any new code path that reaches a target must honor it.
-- **Three checks hardcoded in `checks.py`, no plugin loader.** If a 4th is ever needed, add a 4th function and call it from `run_all`.
+- **Pydantic v2 as the inter-module spine.** Every file's inputs and outputs are typed models. Primary defense against AI regeneration drift.
+- **Raw SQL in one file.** `db.py` is readable end-to-end. Do not introduce SQLAlchemy or an ORM.
+- **Flat package layout.** ~12 files in `sepulchrynscan/`, each under ~300 lines. An agent can rewrite any single file in one turn.
+- **HTML-first reporting with Plotly JSON embedded.** Zero native dependencies. Browser print-to-PDF. Do not pull in WeasyPrint or ReportLab.
+- **Two-stage CVE pipeline.** Vulners NSE finds CVE IDs (one subprocess, no rate limits). NVD API 2.0 scores them (cached by ID). Risk uses NVD CVSS only.
+- **Allowlist gate in `cli.py`.** Enforced via `target_allowed` before any network I/O.
+- **Checks are hardcoded functions, no plugin loader.** If a 5th check is needed, add a function and call it from `run_all`.
+- **KEV + EPSS enrichment is opt-in by architecture.** It runs automatically during CVE enrichment but degrades gracefully on network failure (warnings, not crashes).
 
 ---
 
 ## What Didn't Work / Was Rejected
 
-Do not re-introduce these without a very strong reason. Each was considered and cut.
+Do not re-introduce these.
 
-- **WeasyPrint for PDF generation.** GTK dependency chain on Windows is install hell and fragile across Docker base images. Replaced with HTML + browser print.
-- **Plugin architecture for custom checks.** Premature abstraction for three checks. Dynamic loaders make regeneration brittle.
-- **FastAPI REST layer and Web UI in MVP.** Too many surfaces for an AI to keep coherent simultaneously. Deferred to v1.1 per spec §13.
-- **SQLAlchemy / any ORM.** Obscures the SQL and adds cross-file state that AI regeneration breaks easily.
-- **Version-string → NVD lookup as primary CVE source.** Extremely noisy (false positives dominate). Vulners NSE does the matching better because it uses CPE.
-- **Default-credential detection in MVP.** Low signal + legal/ethical baggage for a portfolio demo. Deferred indefinitely.
-- **Scheduling, delta scans, compliance mapping, report branding in MVP.** Already in the roadmap (§13). Do not pull them forward.
-- **Name "SentinelScan".** Earlier draft name. Current name is **SepulchrynScan**. If you see "Sentinel" anywhere outside git history, it is a bug.
+- **WeasyPrint for PDF.** GTK dependency hell on Windows. Replaced with HTML + browser print.
+- **Plugin architecture for checks.** Premature abstraction. Dynamic loaders make regeneration brittle.
+- **FastAPI REST layer and Web UI in MVP.** Too many surfaces. Deferred to v1.1 per spec §13.
+- **SQLAlchemy / any ORM.** Obscures SQL and adds cross-file state that AI regeneration breaks.
+- **Version-string → NVD lookup as primary CVE source.** Extremely noisy false positives. Vulners NSE uses CPE matching and is far more accurate.
+- **Default-credential detection.** Low signal + legal/ethical baggage for a portfolio demo. Deferred indefinitely.
 
 ---
 
 ## Environment Notes
 
-- **OS:** Windows 11; shell is Git Bash (Unix syntax, forward-slash paths).
-- **Python:** 3.10+. No venv has been created yet — do that first (`python -m venv .venv`).
-- **Pyright is loud:** editor will show "Import ... could not be resolved" for every intra-package import until a venv is created and the editor points at it. These are false alarms, not bugs.
-- **Nmap binary** must be on PATH for `discovery.py` to work. Docker image will pin it.
+- **OS:** Windows 11; shell is PowerShell / Git Bash.
+- **Python:** 3.11+ (tested on 3.11.9).
+- **Nmap binary** must be on PATH for `discovery.py` to work.
 - **NVD API key** (optional) raises rate limit from 5/30s to 50/30s. Env var: `NVD_API_KEY`.
+- **Offline mode** env var: `SEPULCHRYN_OFFLINE=1` or `--offline` flag.
 
 ---
 
-## Next Steps — in priority order
+## Next Steps — if you pick this up
 
-### 1. Bootstrap the environment (5 min)
+### 1. Verify the environment works
 ```bash
 cd /e/SepulchrynScan
-python -m venv .venv
-.venv/Scripts/pip install -r requirements.txt
-.venv/Scripts/pytest    # should show 8 passing in tests/test_risk.py
-.venv/Scripts/python -m sepulchrynscan.cli list   # should print "no scans recorded"
+.venv\Scripts\pytest -v    # expect 92 passed
+.venv\Scripts\python -m sepulchrynscan.cli list   # "no scans recorded" or a list
 ```
-If `pytest` passes and `cli list` runs clean, the contracts compile and the DB schema applies. That is the green light for building outward.
 
-### 2. Implement `cve.py` (highest leverage, no external binary needed)
-File: [sepulchrynscan/cve.py](sepulchrynscan/cve.py)
+### 2. Likely extension areas
 
-- `fetch_cve_from_nvd(cve_id)`:
-  - `GET https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=<id>` (constant in `config.NVD_API_URL`).
-  - Honor `NVD_API_KEY` env var via header `apiKey`.
-  - Sleep `config.NVD_RATE_LIMIT_SLEEP_SEC` between calls; exponential backoff on HTTP 429.
-  - Extract CVSS from `vulnerabilities[0].cve.metrics.cvssMetricV31[0].cvssData.baseScore`, fall back to `cvssMetricV30`, then `cvssMetricV2`.
-  - Pull `descriptions[?lang=en].value`, `published`, and `references[*].url`.
-  - Return a `CVE` model. `Severity.from_cvss()` derives the bucket.
+| Area | Why | Complexity |
+|------|-----|------------|
+| **FastAPI REST layer** | v1.1 roadmap — wraps existing pipeline functions in HTTP endpoints | Medium |
+| **Scheduled scans** | v1.1 roadmap — `sepulchryn daemon` with `schedule` lib | Low |
+| **SARIF export** | v1.4 roadmap — `sepulchryn export <scan_id> --format sarif` | Low |
+| **Report branding** | v1.2 roadmap — custom logo, company name, disclaimer via config | Low |
+| **Webhook alerts** | v1.3 roadmap — POST to Slack/Teams when critical findings found | Low |
+| **NIST 800-53 / CIS mapping** | v1.3 roadmap — map findings to compliance controls | High |
+| **Cloud provider checks** | v1.5 roadmap — S3/Blob exposure scanning | High |
 
-- `enrich(conn, hosts)`:
-  - Collect all unique CVE IDs from every `Service.cve_ids` across `hosts`.
-  - For each: `db.get_cached_cve()` → fall back to `fetch_cve_from_nvd()` → `db.put_cve()`.
-  - Emit one `Finding` per (service, CVE) with `source=FindingSource.CVE`, `host_ip`, `port`, `protocol`, `cve_id`, `cvss_v3_score`, `severity`, references copied from the CVE.
+### 3. If you add a feature
 
-- Add `tests/test_cve.py` with requests-mock covering cache hit / cache miss / 429 backoff / missing-CVSS fallback.
-
-### 3. Implement `discovery.py`
-File: [sepulchrynscan/discovery.py](sepulchrynscan/discovery.py)
-
-- Use `python-nmap`'s `PortScanner`.
-- Arguments from `config.NMAP_ARGS` (currently `-sV --top-ports 1000 --script vulners`).
-- For each host in scan result, build a `Host`; for each port, build a `Service`.
-- Parse the vulners output from `port['script']['vulners']` using regex `r'CVE-\d{4}-\d{4,}'`, dedupe into `Service.cve_ids`.
-- Handle unreachable host gracefully — return an empty list with a warning, do not crash.
-
-### 4. Wire the pipeline in `cli.py`
-File: [sepulchrynscan/cli.py](sepulchrynscan/cli.py) function `_cmd_scan`
-
-```python
-hosts = discovery.run(args.target)
-with db.connect() as conn, db.transaction(conn):
-    db.insert_hosts(conn, scan.id, hosts)
-    cve_findings = cve.enrich(conn, hosts)
-    check_findings = checks.run_all(hosts)
-    db.insert_findings(conn, scan.id, cve_findings + check_findings)
-    db.update_scan_status(conn, scan.id, ScanStatus.COMPLETED, completed_at=datetime.now(timezone.utc))
-```
-At this point `sepulchryn scan 127.0.0.1` should produce a populated SQLite row you can inspect.
-
-### 5. Implement `checks.py`
-File: [sepulchrynscan/checks.py](sepulchrynscan/checks.py)
-
-- `http_headers`: requests with 5s timeout. Required headers and their severity on absence: HSTS=Medium, CSP=Medium, X-Frame-Options=Low, X-Content-Type-Options=Low, Referrer-Policy=Low.
-- `tls_config`: for every service with name matching `https|ssl|tls`, use `ssl.create_default_context()` + `wrap_socket` and inspect negotiated protocol. Flag TLS < 1.2 as High. Use `cryptography.x509` to parse cert expiry; flag <30 days = Medium, expired = Critical.
-- `exposed_services`: static dict of `(port, name) → severity`, e.g. `(23, "telnet") → Critical`, `(3389, "ms-wbt-server") → High`.
-
-### 6. Implement `report.py` + fill templates
-File: [sepulchrynscan/report.py](sepulchrynscan/report.py)
-
-- Jinja2 `Environment(loader=FileSystemLoader(config.TEMPLATES_DIR), autoescape=True)`.
-- Pass `scan`, `findings`, `risk_score`, `severity_breakdown`, `top_hosts`, and a dict of Plotly figures (each `fig.to_json()`).
-- Executive template uses Plotly CDN; technical template uses a sortable JS table (vanilla is fine, no framework).
-- Write both files to `config.REPORTS_DIR / scan.id / {technical,executive}.html`.
-
-### 7. Docker demo
-Create `docker/docker-compose.demo.yml` with two services: the scanner image and `bkimminich/juice-shop`. Expose Juice Shop on an internal network name `juice-shop` so the allowlist entry matches. `sepulchryn demo` runs `docker compose up -d`, waits for the target to respond, runs `scan` + `report`, prints the output paths.
-
-### 8. Backfill missing tests
-- `tests/test_db.py` — insert round-trip for scan/hosts/findings, CVE cache TTL behavior.
-- `tests/test_cli_allowlist.py` — `target_allowed` against IPs, CIDRs, hostnames; CLI exits 2 on denial.
+1. Update `models.py` if you change data shapes — **all consumers must be updated in the same commit.**
+2. Update `db.py` schema + CRUD if you add fields. Use `_migrate_schema()` pattern for backward compatibility.
+3. Add pytest coverage for anything involving money, security, or caching behavior.
+4. Run `black .` and `ruff check --fix .` before finishing.
+5. Update `README.md` and `PROJECT_SPEC.md` if user-facing behavior changes.
 
 ---
 
 ## Contributor Rules (from spec §14)
 
 1. Regenerate, don't patch, if a file has drifted.
-2. Pydantic is the contract. Never break `models.py` shapes without updating every consumer in the same change.
-3. One file, one concern. Do not add cross-module side effects.
+2. Pydantic is the contract. Never break `models.py` shapes without updating every consumer.
+3. One file, one concern. No cross-module side effects.
 4. Raw SQL stays raw.
 5. No plugin systems, no dynamic loaders.
-6. Security-first. Detect only. No hardcoded credentials. No `shell=True`. No unvalidated input to subprocess.
+6. Security-first. Detect only. No hardcoded credentials. No `shell=True`.
 7. Respect the allowlist — any network-bound code path goes through `target_allowed`.
-8. Test `risk`, `cve` cache, and allowlist. UI polish is not a testing priority.
+8. Test `risk`, `cve` cache, allowlist, and offline mode. UI polish is not a testing priority.
 9. Format before commit: `black .` and `ruff check --fix .`.
 
 ---

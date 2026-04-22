@@ -7,6 +7,7 @@ Two concerns live here:
 All functions take a `sqlite3.Connection` so callers can share transactions.
 Use `connect()` for a ready-to-use connection with schema applied.
 """
+
 from __future__ import annotations
 
 import json
@@ -63,7 +64,10 @@ CREATE TABLE IF NOT EXISTS findings (
     protocol       TEXT NOT NULL DEFAULT 'tcp',
     cve_id         TEXT,
     cvss_v3_score  REAL,
-    references_json TEXT NOT NULL DEFAULT '[]'
+    references_json  TEXT NOT NULL DEFAULT '[]',
+    in_kev         INTEGER NOT NULL DEFAULT 0,
+    epss_score     REAL,
+    exploit_refs_json TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_findings_scan ON findings(scan_id);
 
@@ -73,8 +77,11 @@ CREATE TABLE IF NOT EXISTS cve_cache (
     severity       TEXT NOT NULL,
     description    TEXT NOT NULL DEFAULT '',
     published_at   TEXT,
-    references_json TEXT NOT NULL DEFAULT '[]',
-    fetched_at     TEXT NOT NULL
+    references_json  TEXT NOT NULL DEFAULT '[]',
+    fetched_at     TEXT NOT NULL,
+    in_kev         INTEGER NOT NULL DEFAULT 0,
+    epss_score     REAL,
+    exploit_refs_json TEXT NOT NULL DEFAULT '[]'
 );
 """
 
@@ -87,7 +94,36 @@ def connect(db_path: Path | None = None) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+    _migrate_schema(conn)
     return conn
+
+
+def _migrate_schema(conn: sqlite3.Connection) -> None:
+    """Lightweight migrations: add columns that may be missing from older DBs."""
+    # CVE cache migrations
+    cve_cols = {r[1] for r in conn.execute("PRAGMA table_info(cve_cache)")}
+    if "in_kev" not in cve_cols:
+        conn.execute(
+            "ALTER TABLE cve_cache ADD COLUMN in_kev INTEGER NOT NULL DEFAULT 0"
+        )
+    if "epss_score" not in cve_cols:
+        conn.execute("ALTER TABLE cve_cache ADD COLUMN epss_score REAL")
+    if "exploit_refs_json" not in cve_cols:
+        conn.execute(
+            "ALTER TABLE cve_cache ADD COLUMN exploit_refs_json TEXT NOT NULL DEFAULT '[]'"
+        )
+    # findings migrations
+    finding_cols = {r[1] for r in conn.execute("PRAGMA table_info(findings)")}
+    if "in_kev" not in finding_cols:
+        conn.execute(
+            "ALTER TABLE findings ADD COLUMN in_kev INTEGER NOT NULL DEFAULT 0"
+        )
+    if "epss_score" not in finding_cols:
+        conn.execute("ALTER TABLE findings ADD COLUMN epss_score REAL")
+    if "exploit_refs_json" not in finding_cols:
+        conn.execute(
+            "ALTER TABLE findings ADD COLUMN exploit_refs_json TEXT NOT NULL DEFAULT '[]'"
+        )
 
 
 @contextmanager
@@ -101,6 +137,7 @@ def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
 
 
 # ---------- scan lifecycle ----------
+
 
 def insert_scan(conn: sqlite3.Connection, scan: Scan) -> None:
     conn.execute(
@@ -153,12 +190,15 @@ def insert_hosts(conn: sqlite3.Connection, scan_id: str, hosts: Iterable[Host]) 
             )
 
 
-def insert_findings(conn: sqlite3.Connection, scan_id: str, findings: Iterable[Finding]) -> None:
+def insert_findings(
+    conn: sqlite3.Connection, scan_id: str, findings: Iterable[Finding]
+) -> None:
     conn.executemany(
         """INSERT INTO findings
            (scan_id, source, severity, title, description, remediation,
-            host_ip, port, protocol, cve_id, cvss_v3_score, references_json)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            host_ip, port, protocol, cve_id, cvss_v3_score, references_json,
+            in_kev, epss_score, exploit_refs_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         [
             (
                 scan_id,
@@ -173,6 +213,9 @@ def insert_findings(conn: sqlite3.Connection, scan_id: str, findings: Iterable[F
                 f.cve_id,
                 f.cvss_v3_score,
                 json.dumps(f.references),
+                int(f.in_kev),
+                f.epss_score,
+                json.dumps(f.exploit_refs),
             )
             for f in findings
         ],
@@ -180,6 +223,7 @@ def insert_findings(conn: sqlite3.Connection, scan_id: str, findings: Iterable[F
 
 
 # ---------- scan reads ----------
+
 
 def get_scan(conn: sqlite3.Connection, scan_id: str) -> Scan | None:
     row = conn.execute("SELECT * FROM scans WHERE id = ?", (scan_id,)).fetchone()
@@ -191,7 +235,9 @@ def get_scan(conn: sqlite3.Connection, scan_id: str) -> Scan | None:
         id=row["id"],
         target=row["target"],
         started_at=datetime.fromisoformat(row["started_at"]),
-        completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
+        completed_at=(
+            datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None
+        ),
         status=ScanStatus(row["status"]),
         hosts=hosts,
         findings=findings,
@@ -233,7 +279,8 @@ def _load_hosts(conn: sqlite3.Connection, scan_id: str) -> list[Host]:
 
 def _load_findings(conn: sqlite3.Connection, scan_id: str) -> list[Finding]:
     rows = conn.execute(
-        "SELECT * FROM findings WHERE scan_id = ? ORDER BY severity, host_ip, port", (scan_id,)
+        "SELECT * FROM findings WHERE scan_id = ? ORDER BY severity, host_ip, port",
+        (scan_id,),
     ).fetchall()
     return [
         Finding(
@@ -248,12 +295,16 @@ def _load_findings(conn: sqlite3.Connection, scan_id: str) -> list[Finding]:
             cve_id=r["cve_id"],
             cvss_v3_score=r["cvss_v3_score"],
             references=json.loads(r["references_json"] or "[]"),
+            in_kev=bool(r["in_kev"]),
+            epss_score=r["epss_score"],
+            exploit_refs=json.loads(r["exploit_refs_json"] or "[]"),
         )
         for r in rows
     ]
 
 
 # ---------- CVE cache ----------
+
 
 def get_cached_cve(conn: sqlite3.Connection, cve_id: str) -> CVE | None:
     """Return a cached CVE if fresh (within TTL). Stale entries are ignored
@@ -262,31 +313,42 @@ def get_cached_cve(conn: sqlite3.Connection, cve_id: str) -> CVE | None:
     if row is None:
         return None
     fetched_at = datetime.fromisoformat(row["fetched_at"])
-    if datetime.now(timezone.utc) - fetched_at > timedelta(days=config.NVD_CACHE_TTL_DAYS):
+    if datetime.now(timezone.utc) - fetched_at > timedelta(
+        days=config.NVD_CACHE_TTL_DAYS
+    ):
         return None
     return CVE(
         id=row["cve_id"],
         cvss_v3_score=row["cvss_v3_score"],
         severity=Severity(row["severity"]),
         description=row["description"],
-        published_at=datetime.fromisoformat(row["published_at"]) if row["published_at"] else None,
+        published_at=(
+            datetime.fromisoformat(row["published_at"]) if row["published_at"] else None
+        ),
         references=json.loads(row["references_json"] or "[]"),
         fetched_at=fetched_at,
+        in_kev=bool(row["in_kev"]),
+        epss_score=row["epss_score"],
+        exploit_refs=json.loads(row["exploit_refs_json"] or "[]"),
     )
 
 
 def put_cve(conn: sqlite3.Connection, cve: CVE) -> None:
     conn.execute(
         """INSERT INTO cve_cache
-           (cve_id, cvss_v3_score, severity, description, published_at, references_json, fetched_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
+           (cve_id, cvss_v3_score, severity, description, published_at, references_json, fetched_at,
+            in_kev, epss_score, exploit_refs_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(cve_id) DO UPDATE SET
                cvss_v3_score = excluded.cvss_v3_score,
                severity = excluded.severity,
                description = excluded.description,
                published_at = excluded.published_at,
                references_json = excluded.references_json,
-               fetched_at = excluded.fetched_at""",
+               fetched_at = excluded.fetched_at,
+               in_kev = excluded.in_kev,
+               epss_score = excluded.epss_score,
+               exploit_refs_json = excluded.exploit_refs_json""",
         (
             cve.id,
             cve.cvss_v3_score,
@@ -295,6 +357,9 @@ def put_cve(conn: sqlite3.Connection, cve: CVE) -> None:
             cve.published_at.isoformat() if cve.published_at else None,
             json.dumps(cve.references),
             cve.fetched_at.isoformat(),
+            int(cve.in_kev),
+            cve.epss_score,
+            json.dumps(cve.exploit_refs),
         ),
     )
 

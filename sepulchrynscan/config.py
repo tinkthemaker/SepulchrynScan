@@ -1,4 +1,5 @@
 """Paths and constants. Single source of tunable values."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -18,6 +19,17 @@ NVD_RATE_LIMIT_SLEEP_SEC = 6.0
 NVD_TIMEOUT_SEC = 15
 NVD_CACHE_TTL_DAYS = 30
 
+CISA_KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+KEV_CACHE_TTL_HOURS = 24
+
+EXPLOITDB_CSV_URL = (
+    "https://gitlab.com/exploit-database/exploitdb/-/raw/main/files_exploits.csv"
+)
+EXPLOITDB_CACHE_PATH = DATA_DIR / "exploitdb.csv"
+EXPLOITDB_CACHE_TTL_DAYS = 7
+
+EPSS_API_URL = "https://api.first.org/epss/v1/"
+
 NMAP_TOP_PORTS = 1000
 NMAP_ARGS = f"-sV --top-ports {NMAP_TOP_PORTS} --script vulners"
 
@@ -35,3 +47,6 @@ RISK_SCORE_CAP = 100.0
 def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+OFFLINE_ENV = "SEPULCHRYN_OFFLINE"

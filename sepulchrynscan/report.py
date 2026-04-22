@@ -15,6 +15,7 @@ import plotly.graph_objects as go
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from . import config, risk
+from .diff import DiffResult
 from .models import Scan, Severity
 
 
@@ -122,6 +123,10 @@ def render(scan: Scan, out_dir: Path) -> tuple[Path, Path]:
     risk_score = risk.risk_score(scan.findings)
     severity_breakdown = risk.severity_breakdown(scan.findings)
     top_hosts = risk.top_risk_hosts(scan.findings)
+    kev_count = sum(1 for f in scan.findings if f.in_kev)
+    exploit_count = sum(1 for f in scan.findings if f.exploit_refs)
+    epss_values = [f.epss_score for f in scan.findings if f.epss_score is not None]
+    avg_epss = sum(epss_values) / len(epss_values) if epss_values else 0.0
 
     plotly_figures = {
         "risk_gauge": _risk_gauge_figure(risk_score).to_json(),
@@ -156,8 +161,30 @@ def render(scan: Scan, out_dir: Path) -> tuple[Path, Path]:
             severity_breakdown=severity_breakdown,
             top_hosts=top_hosts,
             plotly_figures=plotly_figures,
+            kev_count=kev_count,
+            exploit_count=exploit_count,
+            avg_epss=avg_epss,
         ),
         encoding="utf-8",
     )
 
     return tech_path, exec_path
+
+
+def render_diff(result: DiffResult, out_dir: Path) -> Path:
+    """Render diff.html for a comparison between two scans."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    env = Environment(
+        loader=FileSystemLoader(config.TEMPLATES_DIR),
+        autoescape=select_autoescape(["html", "xml"]),
+    )
+    template = env.get_template("diff.html")
+    path = out_dir / "diff.html"
+    path.write_text(
+        template.render(
+            result=result,
+            risk=risk,
+        ),
+        encoding="utf-8",
+    )
+    return path

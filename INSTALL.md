@@ -160,7 +160,7 @@ Expect: `ok`.
 ```bash
 pytest
 ```
-Expect: `74 passed`. If anything fails here, do not proceed — something in the install is wrong.
+Expect: `92 passed`. If anything fails here, do not proceed — something in the install is wrong.
 
 ---
 
@@ -238,7 +238,7 @@ git --version                   # any
 docker --version                # optional
 source .venv/bin/activate       # or Windows equivalent
 which python                    # should be inside .venv
-pytest                          # 74 passed
+pytest                          # 92 passed
 python -m sepulchrynscan.cli list   # "no scans recorded" or a list
 ```
 

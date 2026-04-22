@@ -145,6 +145,9 @@
             <th><input data-col="3" placeholder="Filter port..."></th>
             <th><input data-col="4" placeholder="Filter title..."></th>
             <th><input data-col="5" placeholder="Filter source..."></th>
+            <th><input data-col="6" placeholder="Filter KEV..."></th>
+            <th><input data-col="7" placeholder="Filter EPSS..."></th>
+            <th><input data-col="8" placeholder="Filter exploits..."></th>
           </tr>
           <tr>
             <th onclick="sortTable(0)">Severity &#8693;</th>
@@ -153,6 +156,9 @@
             <th onclick="sortTable(3)">Port &#8693;</th>
             <th onclick="sortTable(4)">Title &#8693;</th>
             <th onclick="sortTable(5)">Source &#8693;</th>
+            <th onclick="sortTable(6)">KEV &#8693;</th>
+            <th onclick="sortTable(7)">EPSS &#8693;</th>
+            <th onclick="sortTable(8)">Exploits &#8693;</th>
           </tr>
         </thead>
         <tbody>
@@ -164,9 +170,17 @@
             <td>{{ f.port or "—" }}</td>
             <td>{{ f.title }}</td>
             <td>{{ f.source.value }}</td>
+            <td>{% if f.in_kev %}<span style="color:#dc3545;font-weight:700">Yes</span>{% else %}—{% endif %}</td>
+            <td>{% if f.epss_score is not none %}{{ "%.2f"|format(f.epss_score * 100) }}%{% else %}—{% endif %}</td>
+            <td>
+              {% if f.exploit_refs %}
+                <span style="color:#dc3545;font-weight:700">{{ f.exploit_refs|length }}</span>
+                <small>({{ f.exploit_refs|join(", ") }})</small>
+              {% else %}—{% endif %}
+            </td>
           </tr>
           {% else %}
-          <tr><td colspan="6" style="text-align:center;color:var(--muted)">No findings</td></tr>
+          <tr><td colspan="9" style="text-align:center;color:var(--muted)">No findings</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -253,7 +267,7 @@
             row.dataset['visible' + col] = match ? '1' : '0';
             // Check all filter columns
             let visible = true;
-            for (let c = 0; c < 6; c++) {
+            for (let c = 0; c < 9; c++) {
               if (row.dataset['visible' + c] === '0') { visible = false; break; }
             }
             row.style.display = visible ? '' : 'none';

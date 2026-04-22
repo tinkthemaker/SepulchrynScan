@@ -128,6 +128,29 @@ class TestRender:
         assert "severity-high" in html
         assert "severity-medium" in html
 
+    def test_technical_contains_exploit_column(self, tmp_path: Path):
+        scan = _sample_scan()
+        tech, _ = render(scan, tmp_path)
+        html = tech.read_text(encoding="utf-8")
+        assert "Exploits" in html
+
+    def test_empty_scan_has_correct_colspan(self, tmp_path: Path):
+        scan = Scan(
+            id="empty456",
+            target="127.0.0.1",
+            started_at=datetime.now(timezone.utc),
+            status=ScanStatus.COMPLETED,
+        )
+        tech, _ = render(scan, tmp_path)
+        html = tech.read_text(encoding="utf-8")
+        assert 'colspan="9"' in html
+
+    def test_executive_contains_exploit_stat(self, tmp_path: Path):
+        scan = _sample_scan()
+        _, exec_ = render(scan, tmp_path)
+        html = exec_.read_text(encoding="utf-8")
+        assert "Public Exploits Available" in html
+
     def test_empty_scan_renders_without_error(self, tmp_path: Path):
         scan = Scan(
             id="empty456",

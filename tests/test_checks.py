@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 from sepulchrynscan.checks import (
     _check_tls,
     _fetch_headers,
+    admin_panels,
     exposed_services,
     http_headers,
     run_all,
@@ -215,6 +216,24 @@ class TestCheckTls:
         mock_conn.side_effect = Exception("Connection refused")
         assert _check_tls("10.0.0.1", 443) == []
 
+    @patch("sepulchrynscan.checks.socket.create_connection")
+    @patch("sepulchrynscan.checks.ssl.create_default_context")
+    def test_flags_weak_cipher_negotiated(self, mock_ctx_factory, mock_conn):
+        ssock = self._make_mock_ssock(version="TLSv1.2")
+        ssock.cipher.return_value = ("ECDHE-RSA-RC4-SHA", "TLSv1/SSLv3", 128)
+        future = datetime.now(timezone.utc) + timedelta(days=90)
+        ssock.getpeercert.return_value = self._make_cert_der(future)
+        mock_ctx_factory.return_value.wrap_socket.return_value.__enter__ = (
+            lambda *a: ssock
+        )
+        mock_ctx_factory.return_value.wrap_socket.return_value.__exit__ = (
+            lambda *a: None
+        )
+
+        findings = _check_tls("10.0.0.1", 443)
+        assert any("Weak TLS cipher" in f.title for f in findings)
+        assert any(f.severity == Severity.HIGH for f in findings)
+
 
 class TestTlsConfig:
     @patch("sepulchrynscan.checks._check_tls")
@@ -272,19 +291,60 @@ class TestExposedServices:
 # ---------------------------------------------------------------------------
 
 
+class TestAdminPanels:
+    @patch("sepulchrynscan.checks.requests.get")
+    def test_flags_admin_panel_on_non_standard_port(self, mock_get):
+        mock_get.return_value = MockResponse(
+            {"content-type": "text/html"}, status_code=200
+        )
+        mock_get.return_value.text = (
+            "<html><body><form><input name='password'>"
+            "<input name='username'>login</form></body></html>"
+        )
+        host = Host(ip="10.0.0.1", services=[Service(port=9000, name="http")])
+        findings = admin_panels(host)
+        assert len(findings) == 1
+        assert findings[0].source == FindingSource.ADMIN_PANEL
+
+    @patch("sepulchrynscan.checks.requests.get")
+    def test_ignores_standard_ports(self, mock_get):
+        host = Host(
+            ip="10.0.0.1",
+            services=[
+                Service(port=80, name="http"),
+                Service(port=443, name="https"),
+                Service(port=8080, name="http-proxy"),
+            ],
+        )
+        assert admin_panels(host) == []
+        mock_get.assert_not_called()
+
+    @patch("sepulchrynscan.checks.requests.get")
+    def test_ignores_non_admin_response(self, mock_get):
+        mock_get.return_value = MockResponse(
+            {"content-type": "text/html"}, status_code=200
+        )
+        mock_get.return_value.text = "<html><body>hello world</body></html>"
+        host = Host(ip="10.0.0.1", services=[Service(port=9000, name="http")])
+        assert admin_panels(host) == []
+
+
 class TestRunAll:
     @patch("sepulchrynscan.checks.http_headers")
     @patch("sepulchrynscan.checks.tls_config")
     @patch("sepulchrynscan.checks.exposed_services")
-    def test_aggregates_all_findings(self, mock_exp, mock_tls, mock_http):
+    @patch("sepulchrynscan.checks.admin_panels")
+    def test_aggregates_all_findings(self, mock_admin, mock_exp, mock_tls, mock_http):
         mock_http.return_value = [MagicMock(source=FindingSource.HTTP_HEADERS)]
         mock_tls.return_value = [MagicMock(source=FindingSource.TLS)]
         mock_exp.return_value = [MagicMock(source=FindingSource.EXPOSED_SERVICE)]
+        mock_admin.return_value = [MagicMock(source=FindingSource.ADMIN_PANEL)]
 
         hosts = [Host(ip="10.0.0.1", services=[])]
         findings = run_all(hosts)
 
-        assert len(findings) == 3
+        assert len(findings) == 4
         mock_http.assert_called_once_with(hosts[0])
         mock_tls.assert_called_once_with(hosts[0])
         mock_exp.assert_called_once_with(hosts[0])
+        mock_admin.assert_called_once_with(hosts[0])

@@ -3,6 +3,7 @@
 Every module consumes and emits these models. Do not break their shape
 without updating every consumer in the same change.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -42,6 +43,7 @@ class FindingSource(str, Enum):
     HTTP_HEADERS = "http_headers"
     TLS = "tls"
     EXPOSED_SERVICE = "exposed_service"
+    ADMIN_PANEL = "admin_panel"
 
 
 class ScanStatus(str, Enum):
@@ -62,6 +64,9 @@ class CVE(BaseModel):
     published_at: datetime | None = None
     references: list[str] = Field(default_factory=list)
     fetched_at: datetime = Field(default_factory=_utcnow)
+    in_kev: bool = False
+    epss_score: float | None = None
+    exploit_refs: list[str] = Field(default_factory=list)
 
 
 class Service(BaseModel):
@@ -104,6 +109,9 @@ class Finding(BaseModel):
     cve_id: str | None = None
     cvss_v3_score: float | None = None
     references: list[str] = Field(default_factory=list)
+    in_kev: bool = False
+    epss_score: float | None = None
+    exploit_refs: list[str] = Field(default_factory=list)
 
 
 class Scan(BaseModel):
